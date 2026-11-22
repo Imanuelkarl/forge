@@ -1,0 +1,160 @@
+package repositories
+
+import (
+	"context"
+	"sort"
+	"sync"
+	"time"
+
+	"{{.Module}}/internal/domain"
+)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// In-memory {{.Entity}} repository (reference implementation used by tests)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// memory{{.Entity}}Repository satisfies domain.{{.Entity}}Repository using an in-memory map.
+// Thread safety is guaranteed via a sync.RWMutex.
+type memory{{.Entity}}Repository struct {
+	mu    sync.RWMutex
+	store map[{{.ID.GoType}}]*domain.{{.Entity}}
+{{- if .ID.Auto}}
+	// lastID mimics the database's auto-increment sequence.
+	lastID int64
+{{- end}}
+}
+
+// NewMemory{{.Entity}}Repository constructs an initialized in-memory {{.Entity}}Repository.
+func NewMemory{{.Entity}}Repository() domain.{{.Entity}}Repository {
+	return &memory{{.Entity}}Repository{
+		store: make(map[{{.ID.GoType}}]*domain.{{.Entity}}),
+	}
+}
+
+// FindAll returns one page of copies, newest first, and the total number of records.
+func (r *memory{{.Entity}}Repository) FindAll(ctx context.Context, p domain.ListParams) ([]domain.{{.Entity}}, int64, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	if err := ctx.Err(); err != nil {
+		return nil, 0, err
+	}
+
+	items := make([]domain.{{.Entity}}, 0, len(r.store))
+	for _, v := range r.store {
+		items = append(items, *v)
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].CreatedAt.Equal(items[j].CreatedAt) {
+			return items[i].ID > items[j].ID
+		}
+		return items[i].CreatedAt.After(items[j].CreatedAt)
+	})
+
+	total := int64(len(items))
+	start := p.Offset()
+	if start > len(items) {
+		start = len(items)
+	}
+	end := start + p.Limit
+	if end > len(items) {
+		end = len(items)
+	}
+	return items[start:end], total, nil
+}
+
+// FindByID returns a copy of the record with the given ID, or domain.ErrNotFound.
+func (r *memory{{.Entity}}Repository) FindByID(ctx context.Context, id {{.ID.GoType}}) (*domain.{{.Entity}}, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	item, ok := r.store[id]
+	if !ok {
+		return nil, domain.ErrNotFound
+	}
+
+	cp := *item
+	return &cp, nil
+}
+{{range .UniqueFields}}
+// FindBy{{.GoName}} returns a copy of the record with the given {{.Col}}, or domain.ErrNotFound.
+func (r *memory{{$.Entity}}Repository) FindBy{{.GoName}}(ctx context.Context, value {{.BaseType}}) (*domain.{{$.Entity}}, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	for _, item := range r.store {
+		if item.{{.GoName}} == value {
+			cp := *item
+			return &cp, nil
+		}
+	}
+	return nil, domain.ErrNotFound
+}
+{{end}}
+// Create inserts a new record into the store{{if .ID.Auto}}, assigning the next ID{{end}}.
+func (r *memory{{.Entity}}Repository) Create(ctx context.Context, item *domain.{{.Entity}}) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+{{- if .ID.Auto}}
+	if item.ID == 0 {
+		r.lastID++
+		item.ID = r.lastID
+	}
+{{- end}}
+	if _, exists := r.store[item.ID]; exists {
+		return domain.ErrConflict
+	}
+
+	cp := *item
+	r.store[item.ID] = &cp
+	return nil
+}
+
+// Update modifies an existing record and refreshes its UpdatedAt timestamp.
+func (r *memory{{.Entity}}Repository) Update(ctx context.Context, item *domain.{{.Entity}}) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	if _, exists := r.store[item.ID]; !exists {
+		return domain.ErrNotFound
+	}
+
+	item.UpdatedAt = time.Now().UTC()
+	cp := *item
+	r.store[item.ID] = &cp
+	return nil
+}
+
+// Delete removes a record from the store by ID.
+func (r *memory{{.Entity}}Repository) Delete(ctx context.Context, id {{.ID.GoType}}) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	if _, exists := r.store[id]; !exists {
+		return domain.ErrNotFound
+	}
+
+	delete(r.store, id)
+	return nil
+}

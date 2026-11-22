@@ -1,0 +1,140 @@
+// Package config manages application configuration loaded from environment variables.
+//
+// Following twelve-factor app methodology, all configuration values are defined
+// via environment variables and loaded into a strongly typed Config struct at boot.
+// Business packages MUST NOT read os.Getenv directly.
+package config
+
+import (
+	"errors"
+	"fmt"
+	"os"
+	"strconv"
+	"strings"
+	"time"
+)
+
+// Config represents all application runtime configuration parameters.
+type Config struct {
+	// Port is the TCP port on which the HTTP server will bind and listen.
+	Port int
+
+	// Env represents the execution environment ("development", "staging", "production").
+	Env string
+
+	// LogLevel defines the slog logging verbosity ("debug", "info", "warn", "error").
+	LogLevel string
+
+	// DatabaseURL is the connection string for the {{.Dialect}} database.
+	DatabaseURL string
+
+	// DBMaxOpenConns caps the number of open database connections.
+	DBMaxOpenConns int
+
+	// DBMaxIdleConns caps the number of idle database connections kept in the pool.
+	DBMaxIdleConns int
+
+	// DBConnMaxLifetime is the maximum time a connection may be reused.
+	DBConnMaxLifetime time.Duration
+
+	// CORSAllowedOrigins is the list of authorized domains for Cross-Origin Resource Sharing.
+	CORSAllowedOrigins []string
+
+	// ShutdownTimeout defines the maximum duration allowed for active requests to finish during shutdown.
+	ShutdownTimeout time.Duration
+}
+
+// Load reads and validates configuration values from the system environment.
+// A local .env file is loaded first (values already present in the environment win).
+func Load() (*Config, error) {
+	loadDotEnv(".env")
+
+	port, err := getEnvInt("PORT", 8080)
+	if err != nil {
+		return nil, fmt.Errorf("config: invalid PORT: %w", err)
+	}
+
+	shutdownSec, err := getEnvInt("SHUTDOWN_TIMEOUT_SECONDS", 15)
+	if err != nil {
+		return nil, fmt.Errorf("config: invalid SHUTDOWN_TIMEOUT_SECONDS: %w", err)
+	}
+
+	maxOpen, err := getEnvInt("DB_MAX_OPEN_CONNS", 25)
+	if err != nil {
+		return nil, fmt.Errorf("config: invalid DB_MAX_OPEN_CONNS: %w", err)
+	}
+
+	maxIdle, err := getEnvInt("DB_MAX_IDLE_CONNS", 5)
+	if err != nil {
+		return nil, fmt.Errorf("config: invalid DB_MAX_IDLE_CONNS: %w", err)
+	}
+
+	lifetimeMin, err := getEnvInt("DB_CONN_MAX_LIFETIME_MINUTES", 30)
+	if err != nil {
+		return nil, fmt.Errorf("config: invalid DB_CONN_MAX_LIFETIME_MINUTES: %w", err)
+	}
+
+	dbURL := getEnv("DATABASE_URL", "")
+	if dbURL == "" {
+		return nil, errors.New("config: DATABASE_URL is required")
+	}
+
+	origins := strings.Split(getEnv("CORS_ALLOWED_ORIGINS", "http://localhost:3000"), ",")
+	for i := range origins {
+		origins[i] = strings.TrimSpace(origins[i])
+	}
+
+	return &Config{
+		Port:               port,
+		Env:                getEnv("ENV", "development"),
+		LogLevel:           getEnv("LOG_LEVEL", "debug"),
+		DatabaseURL:        dbURL,
+		DBMaxOpenConns:     maxOpen,
+		DBMaxIdleConns:     maxIdle,
+		DBConnMaxLifetime:  time.Duration(lifetimeMin) * time.Minute,
+		CORSAllowedOrigins: origins,
+		ShutdownTimeout:    time.Duration(shutdownSec) * time.Second,
+	}, nil
+}
+
+// DSN returns the connection string in the format expected by the database/sql driver.
+func (c *Config) DSN() string {
+{{- if eq .Dialect "mysql"}}
+	// The shared DATABASE_URL uses a mysql:// prefix (needed by golang-migrate);
+	// the go-sql-driver/mysql driver wants the bare DSN.
+	return strings.TrimPrefix(c.DatabaseURL, "mysql://")
+{{- else}}
+	return c.DatabaseURL
+{{- end}}
+}
+
+// IsDevelopment returns true when the service is executing in a local/development environment.
+func (c *Config) IsDevelopment() bool {
+	return c.Env == "development"
+}
+
+// IsProduction returns true when the service is executing in a production environment.
+func (c *Config) IsProduction() bool {
+	return c.Env == "production"
+}
+
+// getEnv retrieves a string environment variable or falls back to a default value if unset.
+func getEnv(key, fallback string) string {
+	if v, ok := os.LookupEnv(key); ok && v != "" {
+		return v
+	}
+	return fallback
+}
+
+// getEnvInt retrieves an integer environment variable or falls back to a default value if unset.
+func getEnvInt(key string, fallback int) (int, error) {
+	v, ok := os.LookupEnv(key)
+	if !ok || v == "" {
+		return fallback, nil
+	}
+	parsed, err := strconv.Atoi(v)
+	if err != nil {
+		return 0, fmt.Errorf("cannot parse %q as int: %w", v, err)
+	}
+	return parsed, nil
+}

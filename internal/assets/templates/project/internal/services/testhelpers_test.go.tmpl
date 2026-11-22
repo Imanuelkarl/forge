@@ -1,0 +1,16 @@
+package services_test
+
+import (
+	"io"
+	"log/slog"
+)
+
+// newDiscardLogger creates an slog.Logger that discards output during tests.
+func newDiscardLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}
+
+// ptr returns a pointer to v. Generated tests use it to build optional DTO fields.
+func ptr[T any](v T) *T {
+	return &v
+}

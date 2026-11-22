@@ -1,0 +1,101 @@
+// Package handlers implements the HTTP transport layer for the application.
+//
+// Responsibilities:
+//  1. Decode and deserialize incoming HTTP request parameters and JSON bodies.
+//  2. Trigger request payload validation (e.g. validator/v10).
+//  3. Invoke domain services via context-aware service interfaces.
+//  4. Map domain errors to standard HTTP response codes and structures.
+//  5. Encode output payloads into consistent JSON envelopes.
+package handlers
+
+import (
+	"encoding/json"
+	"net/http"
+)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Standard JSON Response Envelopes
+// ─────────────────────────────────────────────────────────────────────────────
+
+// SuccessResponse represents the standard JSON envelope for all successful HTTP responses (2xx).
+type SuccessResponse struct {
+	// Status is always "success" on 2xx responses.
+	Status string `json:"status"`
+
+	// Message provides an optional human-readable confirmation message.
+	Message string `json:"message,omitempty"`
+
+	// Data contains the primary response payload (entity, collection, or DTO).
+	Data any `json:"data,omitempty"`
+
+	// Meta carries pagination details on list responses.
+	Meta any `json:"meta,omitempty"`
+}
+
+// ErrorResponse represents the standard JSON envelope for all client and server error responses (4xx, 5xx).
+type ErrorResponse struct {
+	// Status is always "error" on error responses.
+	Status string `json:"status"`
+
+	// Code is an uppercase machine-readable error code (e.g., "NOT_FOUND", "VALIDATION_ERROR").
+	Code string `json:"code"`
+
+	// Message is a human-readable explanation of why the request failed.
+	Message string `json:"message"`
+
+	// Details contains additional structured diagnostics (e.g., list of invalid fields).
+	Details any `json:"details,omitempty"`
+}
+
+// RespondJSON marshals the provided payload into JSON and writes it to the response with the specified status code.
+func RespondJSON(w http.ResponseWriter, status int, payload any) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
+	if payload != nil {
+		_ = json.NewEncoder(w).Encode(payload)
+	}
+}
+
+// RespondSuccess formats and sends a 2xx success response wrapping the given data payload.
+func RespondSuccess(w http.ResponseWriter, status int, data any) {
+	RespondJSON(w, status, SuccessResponse{
+		Status: "success",
+		Data:   data,
+	})
+}
+
+// RespondList formats and sends a 2xx success response containing a collection and its pagination metadata.
+func RespondList(w http.ResponseWriter, status int, data any, meta any) {
+	RespondJSON(w, status, SuccessResponse{
+		Status: "success",
+		Data:   data,
+		Meta:   meta,
+	})
+}
+
+// RespondMessage formats and sends a 2xx success response containing only an informational message.
+func RespondMessage(w http.ResponseWriter, status int, message string) {
+	RespondJSON(w, status, SuccessResponse{
+		Status:  "success",
+		Message: message,
+	})
+}
+
+// RespondError formats and sends a standardized error response with the given status, machine code, and message.
+func RespondError(w http.ResponseWriter, status int, code string, message string) {
+	RespondJSON(w, status, ErrorResponse{
+		Status:  "error",
+		Code:    code,
+		Message: message,
+	})
+}
+
+// RespondValidationError formats and sends an HTTP 422 Unprocessable Entity response containing field-level error details.
+func RespondValidationError(w http.ResponseWriter, message string, details any) {
+	RespondJSON(w, http.StatusUnprocessableEntity, ErrorResponse{
+		Status:  "error",
+		Code:    "VALIDATION_ERROR",
+		Message: message,
+		Details: details,
+	})
+}

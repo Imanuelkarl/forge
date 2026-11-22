@@ -1,0 +1,72 @@
+package handlers
+
+import (
+	"context"
+	"net/http"
+	"time"
+)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Health & Readiness Probes
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Pinger is satisfied by *sql.DB and by test doubles.
+type Pinger interface {
+	PingContext(ctx context.Context) error
+}
+
+// HealthStatus represents the payload returned by liveness and readiness probes.
+type HealthStatus struct {
+	// Status describes the current state ("healthy", "ready", "degraded").
+	Status string `json:"status"`
+
+	// Timestamp is the current UTC server time in RFC3339 format.
+	Timestamp string `json:"timestamp"`
+
+	// Uptime is a human-readable duration indicating how long the process has been running.
+	Uptime string `json:"uptime"`
+}
+
+// HealthHandler manages endpoints used by load balancers and container orchestrators (e.g. Kubernetes).
+type HealthHandler struct {
+	startTime time.Time
+	db        Pinger
+}
+
+// NewHealthHandler constructs a HealthHandler recording the process boot timestamp.
+// The Pinger is used by the readiness probe to verify database connectivity.
+func NewHealthHandler(db Pinger) *HealthHandler {
+	return &HealthHandler{
+		startTime: time.Now().UTC(),
+		db:        db,
+	}
+}
+
+// Health handles GET /health (Liveness Probe).
+func (h *HealthHandler) Health(w http.ResponseWriter, _ *http.Request) {
+	RespondJSON(w, http.StatusOK, HealthStatus{
+		Status:    "healthy",
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+		Uptime:    time.Since(h.startTime).String(),
+	})
+}
+
+// Ready handles GET /readyz (Readiness Probe).
+// It reports 503 when the database cannot be reached.
+func (h *HealthHandler) Ready(w http.ResponseWriter, r *http.Request) {
+	if h.db != nil {
+		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		defer cancel()
+
+		if err := h.db.PingContext(ctx); err != nil {
+			RespondError(w, http.StatusServiceUnavailable, "DATABASE_UNAVAILABLE", "database ping failed")
+			return
+		}
+	}
+
+	RespondJSON(w, http.StatusOK, HealthStatus{
+		Status:    "ready",
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+		Uptime:    time.Since(h.startTime).String(),
+	})
+}

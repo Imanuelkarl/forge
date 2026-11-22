@@ -1,0 +1,93 @@
+// Package middleware provides HTTP middlewares for tracing, observability, and security.
+package middleware
+
+import (
+	"log/slog"
+	"net/http"
+	"time"
+)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Structured HTTP Request Logger (slog)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// responseWriter wraps http.ResponseWriter to intercept and record the HTTP status code
+// and total response size in bytes.
+type responseWriter struct {
+	http.ResponseWriter
+	statusCode   int
+	bytesWritten int
+}
+
+// WriteHeader captures the response status code prior to forwarding it to the client.
+func (rw *responseWriter) WriteHeader(code int) {
+	rw.statusCode = code
+	rw.ResponseWriter.WriteHeader(code)
+}
+
+// Write captures the total number of bytes written before delegating.
+func (rw *responseWriter) Write(b []byte) (int, error) {
+	n, err := rw.ResponseWriter.Write(b)
+	rw.bytesWritten += n
+	return n, err
+}
+
+// StructuredLogger returns a middleware handler that logs HTTP request execution details
+// using Go's standard library log/slog.
+//
+// Captured attributes:
+//   - method: HTTP verb (GET, POST, etc.)
+//   - path: URL path
+//   - status: HTTP status code
+//   - duration: Request processing duration
+//   - bytes: Size of response body
+//   - remote_addr: Client IP address
+//   - user_agent: Client User-Agent header
+//   - request_id: Unique trace ID (if RequestID middleware is upstream)
+func StructuredLogger(logger *slog.Logger) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			start := time.Now()
+
+			// Wrap standard response writer to capture status code & size
+			wrapped := &responseWriter{
+				ResponseWriter: w,
+				statusCode:     http.StatusOK, // Default to 200 OK if WriteHeader is not explicitly called
+			}
+
+			// Process the next handler in the pipeline
+			next.ServeHTTP(wrapped, r)
+
+			// Calculate latency and build structured log attributes
+			duration := time.Since(start)
+			requestID := GetRequestID(r.Context())
+
+			attrs := []slog.Attr{
+				slog.String("method", r.Method),
+				slog.String("path", r.URL.Path),
+				slog.Int("status", wrapped.statusCode),
+				slog.String("duration", duration.String()),
+				slog.Int("bytes", wrapped.bytesWritten),
+				slog.String("remote_addr", r.RemoteAddr),
+				slog.String("user_agent", r.UserAgent()),
+			}
+
+			if requestID != "" {
+				attrs = append(attrs, slog.String("request_id", requestID))
+			}
+
+			// Dynamically assign log level based on response HTTP status:
+			//   - 5xx: LevelError (indicates server-side defects or critical dependency outages)
+			//   - 4xx: LevelWarn  (indicates client input or authorization errors)
+			//   - 2xx/3xx: LevelInfo (normal operational telemetry)
+			level := slog.LevelInfo
+			if wrapped.statusCode >= 500 {
+				level = slog.LevelError
+			} else if wrapped.statusCode >= 400 {
+				level = slog.LevelWarn
+			}
+
+			logger.LogAttrs(r.Context(), level, "http request", attrs...)
+		})
+	}
+}

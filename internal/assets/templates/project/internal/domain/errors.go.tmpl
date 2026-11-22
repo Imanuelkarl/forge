@@ -1,0 +1,68 @@
+// Package domain contains core business models, interfaces, and sentinel errors.
+//
+// Domain rules:
+//  1. The domain layer must NEVER import transport (HTTP/handlers) or persistence (repositories).
+//  2. All errors defined here are sentinel errors representing business domain failures.
+//  3. Handlers map these domain errors to appropriate HTTP status codes via errors.Is().
+package domain
+
+import "errors"
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Sentinel Domain Errors
+// ─────────────────────────────────────────────────────────────────────────────
+// Use these constants to identify domain error types throughout services & handlers.
+
+var (
+	// ErrNotFound indicates that the requested entity does not exist in persistence.
+	// HTTP status mapping: 404 Not Found
+	ErrNotFound = errors.New("resource not found")
+
+	// ErrConflict indicates a uniqueness constraint violation (e.g. duplicate email).
+	// HTTP status mapping: 409 Conflict
+	ErrConflict = errors.New("resource conflict")
+
+	// ErrValidation indicates business domain rules or field constraints failed.
+	// HTTP status mapping: 422 Unprocessable Entity
+	ErrValidation = errors.New("validation error")
+
+	// ErrUnauthorized indicates missing, expired, or invalid authentication credentials.
+	// HTTP status mapping: 401 Unauthorized
+	ErrUnauthorized = errors.New("unauthorized")
+
+	// ErrForbidden indicates authenticated caller lacks required permission/role.
+	// HTTP status mapping: 403 Forbidden
+	ErrForbidden = errors.New("forbidden")
+
+	// ErrInternal indicates an unexpected infrastructure failure (e.g. database down).
+	// HTTP status mapping: 500 Internal Server Error
+	ErrInternal = errors.New("internal error")
+)
+
+// DomainError wraps a sentinel error with additional human-readable contextual information.
+// It allows handlers to display specific error messages while still supporting errors.Is(err, sentinel).
+type DomainError struct {
+	// Err is the underlying sentinel error (e.g., ErrConflict, ErrNotFound).
+	Err error
+
+	// Message is the specific contextual explanation of the failure.
+	Message string
+}
+
+// Error satisfies the Go standard error interface.
+func (e *DomainError) Error() string {
+	return e.Message
+}
+
+// Unwrap allows standard library errors.Is() and errors.As() to inspect the wrapped sentinel error.
+func (e *DomainError) Unwrap() error {
+	return e.Err
+}
+
+// NewDomainError constructs a DomainError linking a sentinel error with custom context text.
+func NewDomainError(sentinel error, message string) *DomainError {
+	return &DomainError{
+		Err:     sentinel,
+		Message: message,
+	}
+}

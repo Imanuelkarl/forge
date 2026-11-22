@@ -1,0 +1,11 @@
+package handlers_test
+
+import (
+	"io"
+	"log/slog"
+)
+
+// newDiscardLogger returns an slog.Logger that discards output during tests.
+func newDiscardLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}

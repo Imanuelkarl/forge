@@ -1,0 +1,14 @@
+package middleware
+
+import (
+	"net/http"
+	"time"
+
+	"github.com/go-chi/httprate"
+)
+
+// {{.Func}} limits each client IP to 100 requests per minute (adjust to taste).
+// Behind a proxy, make sure RealIP is configured so the limit applies per client.
+func {{.Func}}() func(http.Handler) http.Handler {
+	return httprate.LimitByIP(100, time.Minute)
+}

@@ -1,0 +1,93 @@
+package domain
+
+import (
+	"context"
+	"time"
+)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// {{.Entity}} entity & DTOs (scaffolded by goforge from forge.yaml)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// {{.Entity}} represents a {{.HumanName}} record.
+type {{.Entity}} struct {
+	// ID is the primary key ({{.ID.Type}}{{if .ID.Auto}}, assigned by the database{{end}}).
+	ID {{.ID.GoType}} `json:"id"`
+{{range .Fields}}
+	// {{.GoName}} is {{.Doc}}.
+	{{.GoName}} {{.GoType}} `json:"{{.Col}}"`
+{{end}}
+	// CreatedAt is the UTC timestamp when the record was created.
+	CreatedAt time.Time `json:"created_at"`
+
+	// UpdatedAt is the UTC timestamp when the record was last modified.
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// Create{{.Entity}}Request is the DTO for creating a {{.HumanName}}.
+type Create{{.Entity}}Request struct {
+{{- range .CreateFields}}
+	// {{.GoName}} is {{.Doc}}.
+	{{.GoName}} {{.CreateType}} `json:"{{.Col}}" validate:"{{.CreateValidate}}"`
+{{- end}}
+}
+
+// Update{{.Entity}}Request is the DTO for modifying a {{.HumanName}}.
+// Every field is optional; omitted fields are left unchanged.
+type Update{{.Entity}}Request struct {
+{{- range .UpdateFields}}
+	// {{.GoName}} is {{.Doc}}.
+	{{.GoName}} {{.UpdateType}} `json:"{{.Col}}" validate:"{{.UpdateValidate}}"`
+{{- end}}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Persistence Contract (Repository Interface)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// {{.Entity}}Repository specifies data access methods for the {{.Entity}} entity.
+type {{.Entity}}Repository interface {
+	// FindAll returns one page of {{.HumanPlural}} and the total number of records.
+	FindAll(ctx context.Context, p ListParams) ([]{{.Entity}}, int64, error)
+
+	// FindByID retrieves a single {{.HumanName}}. Returns ErrNotFound if no record exists.
+	FindByID(ctx context.Context, id {{.ID.GoType}}) (*{{.Entity}}, error)
+{{range .UniqueFields}}
+	// FindBy{{.GoName}} retrieves a {{$.HumanName}} by its unique {{.Col}}. Returns ErrNotFound if no record exists.
+	FindBy{{.GoName}}(ctx context.Context, value {{.BaseType}}) (*{{$.Entity}}, error)
+{{end}}
+	// Create persists a new {{.HumanName}}. Returns ErrConflict if the ID already exists.
+	Create(ctx context.Context, item *{{.Entity}}) error
+
+	// Update modifies an existing {{.HumanName}}. Returns ErrNotFound if the record does not exist.
+	Update(ctx context.Context, item *{{.Entity}}) error
+
+	// Delete removes a {{.HumanName}} by ID. Returns ErrNotFound if the record does not exist.
+	Delete(ctx context.Context, id {{.ID.GoType}}) error
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Business Logic Contract (Service Interface)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// {{.Entity}}Service specifies the core workflows and business operations for {{.HumanPlural}}.
+// Handlers interact with the application solely through this interface.
+type {{.Entity}}Service interface {
+	// List{{.Plural}} returns one page of {{.HumanPlural}} with pagination metadata.
+	List{{.Plural}}(ctx context.Context, p ListParams) ([]{{.Entity}}, PageMeta, error)
+
+	// Get{{.Entity}}ByID fetches a {{.HumanName}} by its ID.
+	Get{{.Entity}}ByID(ctx context.Context, id {{.ID.GoType}}) (*{{.Entity}}, error)
+
+	// Create{{.Entity}} orchestrates uniqueness checks and creation of a new {{.HumanName}}.
+	Create{{.Entity}}(ctx context.Context, req Create{{.Entity}}Request) (*{{.Entity}}, error)
+
+	// Update{{.Entity}} applies partial updates to a {{.HumanName}}.
+	Update{{.Entity}}(ctx context.Context, id {{.ID.GoType}}, req Update{{.Entity}}Request) (*{{.Entity}}, error)
+
+	// Delete{{.Entity}} removes a {{.HumanName}}.
+	Delete{{.Entity}}(ctx context.Context, id {{.ID.GoType}}) error
+{{range .Custom}}
+	// {{.GoMethod}} implements the custom "{{.Name}}" endpoint ({{.HTTPMethod}} {{.Path}}).
+	{{.GoMethod}}(ctx context.Context{{if .HasID}}, id {{$.ID.GoType}}{{end}}) error
+{{end}}}

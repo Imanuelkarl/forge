@@ -1,0 +1,59 @@
+// Package middleware provides HTTP middlewares for tracing, observability, and security.
+package middleware
+
+import (
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"net/http"
+)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Request ID Tracing Middleware
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ctxKey is an unexported int type to prevent context key collisions across packages.
+type ctxKey int
+
+const (
+	// requestIDKey is the private key for storing the request ID in context.Context.
+	requestIDKey ctxKey = iota
+)
+
+const (
+	// RequestIDHeader is the standard HTTP header used for distributed request correlation.
+	RequestIDHeader = "X-Request-ID"
+)
+
+// RequestID returns middleware that ensures every incoming HTTP request has a unique identifier.
+// If the caller or upstream load balancer already provided an X-Request-ID header, it is reused.
+// Otherwise, a new random identifier is generated and injected into both request context and response headers.
+func RequestID(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id := r.Header.Get(RequestIDHeader)
+		if id == "" {
+			id = generateRequestID()
+		}
+
+		// Echo the request ID back in the HTTP response headers
+		w.Header().Set(RequestIDHeader, id)
+
+		// Store in request context for retrieval in downstream handlers, services, and loggers
+		ctx := context.WithValue(r.Context(), requestIDKey, id)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+// GetRequestID extracts the request ID string from the provided context.
+// Returns an empty string if no request ID is stored in the context.
+func GetRequestID(ctx context.Context) string {
+	id, _ := ctx.Value(requestIDKey).(string)
+	return id
+}
+
+// generateRequestID produces a cryptographically random 16-character hexadecimal string.
+func generateRequestID() string {
+	b := make([]byte, 8)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
+}

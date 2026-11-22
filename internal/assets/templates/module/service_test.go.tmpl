@@ -1,0 +1,149 @@
+package services_test
+
+import (
+	"context"
+	"errors"
+	"testing"
+	"time"
+
+	"{{.Module}}/internal/domain"
+	"{{.Module}}/internal/repositories"
+	"{{.Module}}/internal/services"
+)
+
+// Keeps the time import in use for modules without timestamp fields.
+var _ = time.Now
+
+func new{{.Entity}}TestService() domain.{{.Entity}}Service {
+	return services.New{{.Entity}}Service(repositories.NewMemory{{.Entity}}Repository(), newDiscardLogger())
+}
+
+func sampleCreate{{.Entity}}Request() domain.Create{{.Entity}}Request {
+	return domain.Create{{.Entity}}Request{
+{{- range .CreateFields}}{{if .Required}}
+		{{.GoName}}: {{.SampleCreate}},
+{{- end}}{{end}}
+	}
+}
+
+func Test{{.Entity}}Service_Create(t *testing.T) {
+	svc := new{{.Entity}}TestService()
+
+	item, err := svc.Create{{.Entity}}(context.Background(), sampleCreate{{.Entity}}Request())
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+	if item.ID == {{.ID.Zero}} {
+		t.Errorf("expected a generated ID, got the zero value")
+	}
+	if item.CreatedAt.IsZero() || item.UpdatedAt.IsZero() {
+		t.Errorf("expected timestamps to be set")
+	}
+}
+
+func Test{{.Entity}}Service_GetByID(t *testing.T) {
+	ctx := context.Background()
+	svc := new{{.Entity}}TestService()
+
+	created, err := svc.Create{{.Entity}}(ctx, sampleCreate{{.Entity}}Request())
+	if err != nil {
+		t.Fatalf("setup failed: %v", err)
+	}
+
+	t.Run("found", func(t *testing.T) {
+		found, err := svc.Get{{.Entity}}ByID(ctx, created.ID)
+		if err != nil {
+			t.Fatalf("expected to find {{.HumanName}}, got error: %v", err)
+		}
+		if found.ID != created.ID {
+			t.Errorf("expected ID %v, got %v", created.ID, found.ID)
+		}
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		_, err := svc.Get{{.Entity}}ByID(ctx, {{.ID.Missing}})
+		if !errors.Is(err, domain.ErrNotFound) {
+			t.Fatalf("expected ErrNotFound, got %v", err)
+		}
+	})
+}
+
+func Test{{.Entity}}Service_List(t *testing.T) {
+	ctx := context.Background()
+	svc := new{{.Entity}}TestService()
+
+	if _, err := svc.Create{{.Entity}}(ctx, sampleCreate{{.Entity}}Request()); err != nil {
+		t.Fatalf("setup failed: %v", err)
+	}
+
+	items, meta, err := svc.List{{.Plural}}(ctx, domain.ListParams{})
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+	if len(items) != 1 || meta.Total != 1 {
+		t.Errorf("expected 1 item and total 1, got %d items, total %d", len(items), meta.Total)
+	}
+	if meta.Page != 1 || meta.Limit != domain.DefaultLimit {
+		t.Errorf("expected default pagination, got page=%d limit=%d", meta.Page, meta.Limit)
+	}
+}
+{{with .UpdateTestField}}
+func Test{{$.Entity}}Service_Update(t *testing.T) {
+	ctx := context.Background()
+	svc := new{{$.Entity}}TestService()
+
+	created, err := svc.Create{{$.Entity}}(ctx, sampleCreate{{$.Entity}}Request())
+	if err != nil {
+		t.Fatalf("setup failed: %v", err)
+	}
+
+	updated, err := svc.Update{{$.Entity}}(ctx, created.ID, domain.Update{{$.Entity}}Request{
+		{{.GoName}}: {{.SampleUpdate}},
+	})
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+	if updated.ID != created.ID {
+		t.Errorf("expected ID %v, got %v", created.ID, updated.ID)
+	}
+
+	_, err = svc.Update{{$.Entity}}(ctx, {{$.ID.Missing}}, domain.Update{{$.Entity}}Request{})
+	if !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("expected ErrNotFound for unknown id, got %v", err)
+	}
+}
+{{end}}
+func Test{{.Entity}}Service_Delete(t *testing.T) {
+	ctx := context.Background()
+	svc := new{{.Entity}}TestService()
+
+	created, err := svc.Create{{.Entity}}(ctx, sampleCreate{{.Entity}}Request())
+	if err != nil {
+		t.Fatalf("setup failed: %v", err)
+	}
+
+	if err := svc.Delete{{.Entity}}(ctx, created.ID); err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+	if _, err := svc.Get{{.Entity}}ByID(ctx, created.ID); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("expected ErrNotFound after delete, got %v", err)
+	}
+	if err := svc.Delete{{.Entity}}(ctx, created.ID); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("expected ErrNotFound on second delete, got %v", err)
+	}
+}
+{{if .UniqueFields}}
+func Test{{.Entity}}Service_UniqueConflict(t *testing.T) {
+	ctx := context.Background()
+	svc := new{{.Entity}}TestService()
+
+	if _, err := svc.Create{{.Entity}}(ctx, sampleCreate{{.Entity}}Request()); err != nil {
+		t.Fatalf("first creation failed: %v", err)
+	}
+
+	_, err := svc.Create{{.Entity}}(ctx, sampleCreate{{.Entity}}Request())
+	if !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("expected ErrConflict on duplicate, got %v", err)
+	}
+}
+{{end}}

@@ -1,0 +1,36 @@
+// Package database opens and configures the application's SQL connection pool.
+package database
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	"time"
+
+	_ "{{.DriverImport}}" // registers the "{{.DriverName}}" database/sql driver
+
+	"{{.Module}}/internal/config"
+)
+
+const driverName = "{{.DriverName}}"
+
+// Open creates a connection pool using the supplied configuration and verifies connectivity.
+func Open(ctx context.Context, cfg *config.Config) (*sql.DB, error) {
+	db, err := sql.Open(driverName, cfg.DSN())
+	if err != nil {
+		return nil, fmt.Errorf("database: open: %w", err)
+	}
+
+	db.SetMaxOpenConns(cfg.DBMaxOpenConns)
+	db.SetMaxIdleConns(cfg.DBMaxIdleConns)
+	db.SetConnMaxLifetime(cfg.DBConnMaxLifetime)
+
+	pingCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	if err := db.PingContext(pingCtx); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("database: ping: %w", err)
+	}
+	return db, nil
+}

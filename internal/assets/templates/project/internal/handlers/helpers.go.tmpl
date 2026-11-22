@@ -1,0 +1,100 @@
+package handlers
+
+import (
+	"errors"
+	"log/slog"
+	"net/http"
+	"strconv"
+
+	"github.com/go-playground/validator/v10"
+
+	"{{.Module}}/internal/domain"
+)
+
+// respondDomainError maps domain sentinel errors to HTTP responses.
+// Shared by every generated handler so the mapping lives in exactly one place.
+func respondDomainError(w http.ResponseWriter, r *http.Request, logger *slog.Logger, err error, resource string) {
+	var domErr *domain.DomainError
+
+	switch {
+	case errors.Is(err, domain.ErrNotFound):
+		RespondError(w, http.StatusNotFound, "NOT_FOUND", resource+" not found")
+
+	case errors.Is(err, domain.ErrConflict):
+		msg := resource + " already exists"
+		if errors.As(err, &domErr) {
+			msg = domErr.Message
+		}
+		RespondError(w, http.StatusConflict, "CONFLICT", msg)
+
+	case errors.Is(err, domain.ErrValidation):
+		msg := "validation failed"
+		if errors.As(err, &domErr) {
+			msg = domErr.Message
+		}
+		RespondError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", msg)
+
+	case errors.Is(err, domain.ErrUnauthorized):
+		RespondError(w, http.StatusUnauthorized, "UNAUTHORIZED", "unauthorized access")
+
+	case errors.Is(err, domain.ErrForbidden):
+		RespondError(w, http.StatusForbidden, "FORBIDDEN", "forbidden access")
+
+	default:
+		logger.ErrorContext(r.Context(), "unhandled internal domain error", "error", err)
+		RespondError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "an unexpected server error occurred")
+	}
+}
+
+// validationDetails converts validator.ValidationErrors into structured, field-specific diagnostics.
+func validationDetails(err error) []map[string]string {
+	var ve validator.ValidationErrors
+	if !errors.As(err, &ve) {
+		return nil
+	}
+
+	out := make([]map[string]string, 0, len(ve))
+	for _, fe := range ve {
+		out = append(out, map[string]string{
+			"field":   fe.Field(),
+			"tag":     fe.Tag(),
+			"message": formatFieldError(fe),
+		})
+	}
+	return out
+}
+
+// formatFieldError formats individual validator field errors into human-readable sentences.
+func formatFieldError(fe validator.FieldError) string {
+	switch fe.Tag() {
+	case "required":
+		return fe.Field() + " is required"
+	case "email":
+		return fe.Field() + " must be a valid email address"
+	case "url":
+		return fe.Field() + " must be a valid URL"
+	case "numeric":
+		return fe.Field() + " must be a number"
+	case "oneof":
+		return fe.Field() + " must be one of: " + fe.Param()
+	case "min":
+		return fe.Field() + " must be at least " + fe.Param()
+	case "max":
+		return fe.Field() + " must be at most " + fe.Param()
+	case "gte":
+		return fe.Field() + " must be greater than or equal to " + fe.Param()
+	case "lte":
+		return fe.Field() + " must be less than or equal to " + fe.Param()
+	default:
+		return fe.Field() + " failed validation rule: " + fe.Tag()
+	}
+}
+
+// parseListParams reads ?page= and ?limit= from the query string. Invalid values are ignored
+// and replaced by the defaults when the service normalizes the parameters.
+func parseListParams(r *http.Request) domain.ListParams {
+	q := r.URL.Query()
+	page, _ := strconv.Atoi(q.Get("page"))
+	limit, _ := strconv.Atoi(q.Get("limit"))
+	return domain.ListParams{Page: page, Limit: limit}
+}

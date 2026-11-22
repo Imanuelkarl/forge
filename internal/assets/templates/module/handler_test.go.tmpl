@@ -1,0 +1,111 @@
+package handlers_test
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/go-playground/validator/v10"
+
+	"{{.Module}}/internal/handlers"
+	"{{.Module}}/internal/repositories"
+	"{{.Module}}/internal/services"
+)
+
+func new{{.Entity}}TestRouter() http.Handler {
+	logger := newDiscardLogger()
+	svc := services.New{{.Entity}}Service(repositories.NewMemory{{.Entity}}Repository(), logger)
+	h := handlers.New{{.Entity}}Handler(svc, validator.New(), logger)
+
+	r := chi.NewRouter()
+	r.Route("/api/v1", func(r chi.Router) { h.RegisterRoutes(r) })
+	return r
+}
+
+func Test{{.Entity}}Endpoints(t *testing.T) {
+	router := new{{.Entity}}TestRouter()
+
+	do := func(method, path, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(method, path, bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		return rec
+	}
+
+	base := "/api/v1/{{.Route}}"
+
+	rec := do(http.MethodPost, base, `{{.CreateJSON}}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create: expected 201, got %d. Body: %s", rec.Code, rec.Body.String())
+	}
+
+	var created struct {
+		Data struct {
+			ID {{.ID.GoType}} `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil || created.Data.ID == {{.ID.Zero}} {
+		t.Fatalf("create: could not read id from response (%v). Body: %s", err, rec.Body.String())
+	}
+	itemPath := base + "/" + fmt.Sprint(created.Data.ID)
+
+	t.Run("invalid JSON returns 400", func(t *testing.T) {
+		if rec := do(http.MethodPost, base, "{not json"); rec.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400, got %d. Body: %s", rec.Code, rec.Body.String())
+		}
+	})
+{{- if .HasRequired}}
+
+	t.Run("missing required fields returns 422", func(t *testing.T) {
+		if rec := do(http.MethodPost, base, "{}"); rec.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("expected 422, got %d. Body: %s", rec.Code, rec.Body.String())
+		}
+	})
+{{- end}}
+
+	t.Run("list returns 200", func(t *testing.T) {
+		if rec := do(http.MethodGet, base, ""); rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d. Body: %s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("get returns 200", func(t *testing.T) {
+		if rec := do(http.MethodGet, itemPath, ""); rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d. Body: %s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("get unknown id returns 404", func(t *testing.T) {
+		if rec := do(http.MethodGet, base+"/{{.ID.MissingPath}}", ""); rec.Code != http.StatusNotFound {
+			t.Fatalf("expected 404, got %d. Body: %s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("malformed id returns 400", func(t *testing.T) {
+		if rec := do(http.MethodGet, base+"/not-a-valid-id", ""); rec.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400, got %d. Body: %s", rec.Code, rec.Body.String())
+		}
+	})
+{{- if .UpdateJSON}}
+
+	t.Run("update returns 200", func(t *testing.T) {
+		if rec := do(http.MethodPut, itemPath, `{{.UpdateJSON}}`); rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d. Body: %s", rec.Code, rec.Body.String())
+		}
+	})
+{{- end}}
+
+	t.Run("delete returns 200 then get returns 404", func(t *testing.T) {
+		if rec := do(http.MethodDelete, itemPath, ""); rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d. Body: %s", rec.Code, rec.Body.String())
+		}
+		if rec := do(http.MethodGet, itemPath, ""); rec.Code != http.StatusNotFound {
+			t.Fatalf("expected 404 after delete, got %d", rec.Code)
+		}
+	})
+}

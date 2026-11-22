@@ -1,0 +1,152 @@
+package services
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"time"
+
+	"{{.Module}}/internal/domain"
+)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// {{.Entity}} service (scaffolded by goforge from forge.yaml)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// {{.EntityLower}}Service implements the domain.{{.Entity}}Service interface.
+type {{.EntityLower}}Service struct {
+	repo   domain.{{.Entity}}Repository
+	logger *slog.Logger
+}
+
+// New{{.Entity}}Service constructs a new {{.Entity}}Service with all dependencies injected.
+func New{{.Entity}}Service(repo domain.{{.Entity}}Repository, logger *slog.Logger) domain.{{.Entity}}Service {
+	return &{{.EntityLower}}Service{
+		repo:   repo,
+		logger: logger.With("component", "{{.FilePrefix}}_service"),
+	}
+}
+
+// List{{.Plural}} retrieves one page of {{.HumanPlural}}.
+func (s *{{.EntityLower}}Service) List{{.Plural}}(ctx context.Context, p domain.ListParams) ([]domain.{{.Entity}}, domain.PageMeta, error) {
+	p = p.Normalize()
+
+	items, total, err := s.repo.FindAll(ctx, p)
+	if err != nil {
+		s.logger.ErrorContext(ctx, "failed to list {{.HumanPlural}}", "error", err)
+		return nil, domain.PageMeta{}, fmt.Errorf("list {{.HumanPlural}}: %w", err)
+	}
+	return items, p.Meta(total), nil
+}
+
+// Get{{.Entity}}ByID retrieves a single {{.HumanName}} by its unique ID.
+func (s *{{.EntityLower}}Service) Get{{.Entity}}ByID(ctx context.Context, id {{.ID.GoType}}) (*domain.{{.Entity}}, error) {
+	item, err := s.repo.FindByID(ctx, id)
+	if err != nil {
+		if errors.Is(err, domain.ErrNotFound) {
+			return nil, err
+		}
+		s.logger.ErrorContext(ctx, "failed to get {{.HumanName}}", "id", id, "error", err)
+		return nil, fmt.Errorf("get {{.HumanName}} %v: %w", id, err)
+	}
+	return item, nil
+}
+
+// Create{{.Entity}} applies defaults, checks uniqueness and persists the record.
+{{- if .ID.Auto}}
+// The ID is assigned by the database.
+{{- else}}
+// The ID is a freshly generated UUID (v7, time-ordered).
+{{- end}}
+func (s *{{.EntityLower}}Service) Create{{.Entity}}(ctx context.Context, req domain.Create{{.Entity}}Request) (*domain.{{.Entity}}, error) {
+	now := time.Now().UTC()
+	item := &domain.{{.Entity}}{
+{{- if not .ID.Auto}}
+		ID:        newUUID(),
+{{- end}}
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+{{range .Fields}}{{if .DefaultInit}}
+	{{.DefaultInit}}
+{{- end}}{{end}}
+{{range .CreateFields}}
+	{{.CreateAssign}}
+{{- end}}
+{{range .UniqueFields}}
+	if existing, err := s.repo.FindBy{{.GoName}}(ctx, item.{{.GoName}}); err != nil && !errors.Is(err, domain.ErrNotFound) {
+		s.logger.ErrorContext(ctx, "failed checking {{.Col}} uniqueness", "error", err)
+		return nil, fmt.Errorf("create {{$.HumanName}}: %w", err)
+	} else if existing != nil {
+		return nil, domain.NewDomainError(domain.ErrConflict, "a {{$.HumanName}} with this {{.Col}} already exists")
+	}
+{{end}}
+	if err := s.repo.Create(ctx, item); err != nil {
+		s.logger.ErrorContext(ctx, "failed saving {{.HumanName}} to repository", "error", err)
+		return nil, fmt.Errorf("create {{.HumanName}}: %w", err)
+	}
+
+	s.logger.InfoContext(ctx, "{{.HumanName}} created successfully", "id", item.ID)
+	return item, nil
+}
+
+// Update{{.Entity}} applies partial updates while enforcing uniqueness constraints.
+func (s *{{.EntityLower}}Service) Update{{.Entity}}(ctx context.Context, id {{.ID.GoType}}, req domain.Update{{.Entity}}Request) (*domain.{{.Entity}}, error) {
+	item, err := s.repo.FindByID(ctx, id)
+	if err != nil {
+		if errors.Is(err, domain.ErrNotFound) {
+			return nil, err
+		}
+		s.logger.ErrorContext(ctx, "failed finding {{.HumanName}} for update", "id", id, "error", err)
+		return nil, fmt.Errorf("update {{.HumanName}} %v: %w", id, err)
+	}
+{{range .UniqueFields}}{{if .InUpdate}}
+	if req.{{.GoName}} != nil && *req.{{.GoName}} != item.{{.GoName}} {
+		if existing, err := s.repo.FindBy{{.GoName}}(ctx, *req.{{.GoName}}); err != nil && !errors.Is(err, domain.ErrNotFound) {
+			return nil, fmt.Errorf("update {{$.HumanName}}: %w", err)
+		} else if existing != nil && existing.ID != item.ID {
+			return nil, domain.NewDomainError(domain.ErrConflict, "a {{$.HumanName}} with this {{.Col}} already exists")
+		}
+	}
+{{end}}{{end}}
+{{range .UpdateFields}}
+	{{.UpdateAssign}}
+{{- end}}
+
+	item.UpdatedAt = time.Now().UTC()
+
+	if err := s.repo.Update(ctx, item); err != nil {
+		if errors.Is(err, domain.ErrNotFound) {
+			return nil, err
+		}
+		s.logger.ErrorContext(ctx, "failed updating {{.HumanName}} in repository", "id", id, "error", err)
+		return nil, fmt.Errorf("update {{.HumanName}} %v: %w", id, err)
+	}
+
+	s.logger.InfoContext(ctx, "{{.HumanName}} updated successfully", "id", item.ID)
+	return item, nil
+}
+
+// Delete{{.Entity}} removes a {{.HumanName}} record from the system.
+func (s *{{.EntityLower}}Service) Delete{{.Entity}}(ctx context.Context, id {{.ID.GoType}}) error {
+	if err := s.repo.Delete(ctx, id); err != nil {
+		if errors.Is(err, domain.ErrNotFound) {
+			return err
+		}
+		s.logger.ErrorContext(ctx, "failed deleting {{.HumanName}}", "id", id, "error", err)
+		return fmt.Errorf("delete {{.HumanName}} %v: %w", id, err)
+	}
+
+	s.logger.InfoContext(ctx, "{{.HumanName}} deleted successfully", "id", id)
+	return nil
+}
+{{range .Custom}}
+// {{.GoMethod}} implements the custom "{{.Name}}" endpoint.
+//
+// TODO(goforge): implement the business logic. Until then the endpoint answers 500.
+func (s *{{$.EntityLower}}Service) {{.GoMethod}}(ctx context.Context{{if .HasID}}, id {{$.ID.GoType}}{{end}}) error {
+	s.logger.WarnContext(ctx, "custom endpoint not implemented", "endpoint", "{{.Name}}"{{if .HasID}}, "id", id{{end}})
+	return domain.NewDomainError(domain.ErrInternal, "{{.Name}}: not implemented")
+}
+{{end}}

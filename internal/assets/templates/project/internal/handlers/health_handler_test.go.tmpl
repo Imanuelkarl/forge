@@ -1,0 +1,62 @@
+package handlers_test
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"{{.Module}}/internal/handlers"
+)
+
+type stubPinger struct{ err error }
+
+func (s stubPinger) PingContext(_ context.Context) error { return s.err }
+
+func newHealthTestRouter(pingErr error) http.Handler {
+	return handlers.NewRouter(
+		newDiscardLogger(),
+		&handlers.Handler{Health: handlers.NewHealthHandler(stubPinger{err: pingErr})},
+		[]string{"*"},
+		handlers.RouterOptions{},
+	)
+}
+
+func TestHealthEndpoints(t *testing.T) {
+	t.Run("GET /health returns 200 OK", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		newHealthTestRouter(nil).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/health", nil))
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected status 200, got %d", rec.Code)
+		}
+
+		var body map[string]any
+		if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+			t.Fatalf("failed to decode response body: %v", err)
+		}
+		if body["status"] != "healthy" {
+			t.Errorf("expected status 'healthy', got %v", body["status"])
+		}
+	})
+
+	t.Run("GET /readyz returns 200 when the database is reachable", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		newHealthTestRouter(nil).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected status 200, got %d", rec.Code)
+		}
+	})
+
+	t.Run("GET /readyz returns 503 when the database is down", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		newHealthTestRouter(errors.New("connection refused")).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+
+		if rec.Code != http.StatusServiceUnavailable {
+			t.Fatalf("expected status 503, got %d", rec.Code)
+		}
+	})
+}

@@ -1,0 +1,92 @@
+# ──────────────────────────────────────────────
+# {{.Name}} — Makefile
+# ──────────────────────────────────────────────
+
+APP_NAME   := server
+BUILD_DIR  := ./bin
+MAIN_PATH  := ./cmd/server
+MIGRATE    := go run ./cmd/migrate
+
+.PHONY: run build test test-race lint clean tidy fmt vet help migrate-up migrate-down migrate-status migrate-create migrate-force{{if .Swagger}} swagger{{end}}
+
+## run: Start the server locally
+run:
+	@echo ">>> Starting $(APP_NAME)..."
+	go run $(MAIN_PATH)/main.go
+
+## build: Compile a static production binary
+build:
+	@echo ">>> Building $(APP_NAME)..."
+	CGO_ENABLED=0 go build -ldflags="-s -w" -o $(BUILD_DIR)/$(APP_NAME) $(MAIN_PATH)
+	@echo ">>> Binary built at $(BUILD_DIR)/$(APP_NAME)"
+
+## test: Run all unit tests
+test:
+	@echo ">>> Running tests..."
+	go test ./... -count=1
+
+## test-race: Run tests with race detector
+test-race:
+	@echo ">>> Running tests with race detector..."
+	go test -race ./... -count=1
+
+## lint: Run golangci-lint
+lint:
+	@echo ">>> Running linter..."
+	golangci-lint run ./...
+
+## fmt: Format all Go source files
+fmt:
+	@echo ">>> Formatting code..."
+	gofmt -s -w .
+
+## vet: Run go vet
+vet:
+	@echo ">>> Running go vet..."
+	go vet ./...
+
+## tidy: Tidy and verify module dependencies
+tidy:
+	@echo ">>> Tidying modules..."
+	go mod tidy
+	go mod verify
+
+## clean: Remove build artifacts
+clean:
+	@echo ">>> Cleaning..."
+	rm -rf $(BUILD_DIR)
+
+## migrate-up: Apply all pending migrations (make migrate-up n=1 to apply only the next one)
+migrate-up:
+	$(MIGRATE) up $(n)
+
+## migrate-down: Roll back the last migration (make migrate-down n=3 to roll back three)
+migrate-down:
+	$(MIGRATE) down $(n)
+
+## migrate-status: Show the current migration version
+migrate-status:
+	$(MIGRATE) status
+
+## migrate-create: Create a new migration pair (make migrate-create name=add_status_to_orders)
+migrate-create:
+	@test -n "$(name)" || (echo "usage: make migrate-create name=<migration_name>" && exit 1)
+	$(MIGRATE) create $(name)
+
+## migrate-force: Force the migration version, e.g. after a failed migration (make migrate-force version=20260101000000)
+migrate-force:
+	@test -n "$(version)" || (echo "usage: make migrate-force version=<version>" && exit 1)
+	$(MIGRATE) force $(version)
+{{- if .Swagger}}
+
+## swagger: Regenerate Swagger docs (requires: go install github.com/swaggo/swag/cmd/swag@latest)
+swagger:
+	swag init -g cmd/server/main.go -o docs --parseInternal
+	go mod tidy
+{{- end}}
+
+## help: Display this help message
+help:
+	@echo "Usage: make [target]"
+	@echo ""
+	@sed -n 's/^## //p' $(MAKEFILE_LIST) | column -t -s ':' | sed 's/^/  /'

@@ -1,0 +1,17 @@
+package middleware
+
+import "net/http"
+
+// {{.Func}} is a custom middleware. Register it with r.Use({{.Func}}()),
+// or list "{{.Name}}" under `middleware:` in forge.yaml and run `goforge sync`.
+func {{.Func}}() func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// TODO: add logic that runs before the handler.
+
+			next.ServeHTTP(w, r)
+
+			// TODO: add logic that runs after the handler.
+		})
+	}
+}

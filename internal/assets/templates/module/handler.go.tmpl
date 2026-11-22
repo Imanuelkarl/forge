@@ -1,0 +1,275 @@
+package handlers
+
+import (
+{{- if or .HasCreate .HasUpdate}}
+	"encoding/json"
+{{- end}}
+	"log/slog"
+	"net/http"
+{{- if and .NeedsIDParam .ID.Auto}}
+	"strconv"
+{{- end}}
+
+	"github.com/go-chi/chi/v5"
+	"github.com/go-playground/validator/v10"
+
+	"{{.Module}}/internal/domain"
+)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// {{.Entity}} HTTP handler (scaffolded by goforge from forge.yaml)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// {{.Entity}}Handler translates HTTP requests into domain service invocations for {{.HumanName}} operations.
+type {{.Entity}}Handler struct {
+	service  domain.{{.Entity}}Service
+	validate *validator.Validate
+	logger   *slog.Logger
+}
+
+// New{{.Entity}}Handler constructs a {{.Entity}}Handler with its dependencies injected via constructor.
+func New{{.Entity}}Handler(service domain.{{.Entity}}Service, validate *validator.Validate, logger *slog.Logger) *{{.Entity}}Handler {
+	return &{{.Entity}}Handler{
+		service:  service,
+		validate: validate,
+		logger:   logger.With("component", "{{.FilePrefix}}_handler"),
+	}
+}
+
+// RegisterRoutes registers all {{.Entity}} HTTP subroutes onto the provided Chi router.
+func (h *{{.Entity}}Handler) RegisterRoutes(r chi.Router) {
+	r.Route("/{{.Route}}", func(r chi.Router) {
+{{- if .HasList}}
+		r.Get("/", h.List{{.Plural}})
+{{- end}}
+{{- if .HasCreate}}
+		r.Post("/", h.Create{{.Entity}})
+{{- end}}
+{{- if .HasGet}}
+		r.Get("/{ {{- .IDParam -}} }", h.Get{{.Entity}})
+{{- end}}
+{{- if .HasUpdate}}
+		r.Put("/{ {{- .IDParam -}} }", h.Update{{.Entity}})
+{{- end}}
+{{- if .HasDelete}}
+		r.Delete("/{ {{- .IDParam -}} }", h.Delete{{.Entity}})
+{{- end}}
+{{- range .Custom}}
+		{{- if .Permission}}
+		// permission: {{.Permission}} (enforced once the rbac pack is added)
+		{{- end}}
+		r.MethodFunc("{{.HTTPMethod}}", "{{.Path}}", h.{{.GoMethod}})
+{{- end}}
+	})
+}
+{{if .NeedsIDParam}}
+// parseID reads the {{.IDParam}} path parameter and answers 400 when it is not a valid id.
+func (h *{{.Entity}}Handler) parseID(w http.ResponseWriter, r *http.Request) ({{.ID.GoType}}, bool) {
+	raw := chi.URLParam(r, "{{.IDParam}}")
+{{- if .ID.Auto}}
+	id, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || id <= 0 {
+		RespondError(w, http.StatusBadRequest, "INVALID_PARAMETER", "{{.HumanName}} id must be a positive integer")
+		return 0, false
+	}
+	return id, true
+{{- else}}
+	if err := h.validate.Var(raw, "required,uuid"); err != nil {
+		RespondError(w, http.StatusBadRequest, "INVALID_PARAMETER", "{{.HumanName}} id must be a valid UUID")
+		return "", false
+	}
+	return raw, true
+{{- end}}
+}
+{{end}}{{if .HasList}}
+// List{{.Plural}} handles GET /api/v1/{{.Route}}.
+{{- if .Swagger}}
+//
+// @Summary      List {{.HumanPlural}}
+// @Description  Returns a paginated list of {{.HumanPlural}}.
+// @Tags         {{.Tag}}
+// @Produce      json
+// @Param        page   query     int  false  "Page number"  default(1)
+// @Param        limit  query     int  false  "Page size"    default(20)
+// @Success      200    {object}  SuccessResponse{data=[]domain.{{.Entity}},meta=domain.PageMeta}
+// @Failure      500    {object}  ErrorResponse
+// @Router       /{{.Route}} [get]
+{{- end}}
+func (h *{{.Entity}}Handler) List{{.Plural}}(w http.ResponseWriter, r *http.Request) {
+	items, meta, err := h.service.List{{.Plural}}(r.Context(), parseListParams(r))
+	if err != nil {
+		respondDomainError(w, r, h.logger, err, "{{.HumanName}}")
+		return
+	}
+
+	RespondList(w, http.StatusOK, items, meta)
+}
+{{end}}
+{{- if .HasGet}}
+// Get{{.Entity}} handles GET /api/v1/{{.Route}}/{ {{- .IDParam -}} }.
+{{- if .Swagger}}
+//
+// @Summary      Get a {{.HumanName}}
+// @Tags         {{.Tag}}
+// @Produce      json
+// @Param        {{.IDParam}}  path      {{.ID.SwaggerType}}  true  "{{.Entity}} ID"
+// @Success      200  {object}  SuccessResponse{data=domain.{{.Entity}}}
+// @Failure      404  {object}  ErrorResponse
+// @Failure      500  {object}  ErrorResponse
+// @Router       /{{.Route}}/{ {{- .IDParam -}} } [get]
+{{- end}}
+func (h *{{.Entity}}Handler) Get{{.Entity}}(w http.ResponseWriter, r *http.Request) {
+	id, ok := h.parseID(w, r)
+	if !ok {
+		return
+	}
+
+	item, err := h.service.Get{{.Entity}}ByID(r.Context(), id)
+	if err != nil {
+		respondDomainError(w, r, h.logger, err, "{{.HumanName}}")
+		return
+	}
+
+	RespondSuccess(w, http.StatusOK, item)
+}
+{{end}}
+{{- if .HasCreate}}
+// Create{{.Entity}} handles POST /api/v1/{{.Route}}.
+{{- if .Swagger}}
+//
+// @Summary      Create a {{.HumanName}}
+// @Tags         {{.Tag}}
+// @Accept       json
+// @Produce      json
+// @Param        request  body      domain.Create{{.Entity}}Request  true  "{{.Entity}} to create"
+// @Success      201      {object}  SuccessResponse{data=domain.{{.Entity}}}
+// @Failure      400      {object}  ErrorResponse
+// @Failure      409      {object}  ErrorResponse
+// @Failure      422      {object}  ErrorResponse
+// @Failure      500      {object}  ErrorResponse
+// @Router       /{{.Route}} [post]
+{{- end}}
+func (h *{{.Entity}}Handler) Create{{.Entity}}(w http.ResponseWriter, r *http.Request) {
+	var req domain.Create{{.Entity}}Request
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		RespondError(w, http.StatusBadRequest, "INVALID_JSON", "malformed request payload")
+		return
+	}
+
+	if err := h.validate.Struct(req); err != nil {
+		RespondValidationError(w, "request payload validation failed", validationDetails(err))
+		return
+	}
+
+	item, err := h.service.Create{{.Entity}}(r.Context(), req)
+	if err != nil {
+		respondDomainError(w, r, h.logger, err, "{{.HumanName}}")
+		return
+	}
+
+	RespondSuccess(w, http.StatusCreated, item)
+}
+{{end}}
+{{- if .HasUpdate}}
+// Update{{.Entity}} handles PUT /api/v1/{{.Route}}/{ {{- .IDParam -}} }.
+{{- if .Swagger}}
+//
+// @Summary      Update a {{.HumanName}}
+// @Tags         {{.Tag}}
+// @Accept       json
+// @Produce      json
+// @Param        {{.IDParam}}  path      {{.ID.SwaggerType}}                           true  "{{.Entity}} ID"
+// @Param        request  body      domain.Update{{.Entity}}Request  true  "Fields to update"
+// @Success      200      {object}  SuccessResponse{data=domain.{{.Entity}}}
+// @Failure      400      {object}  ErrorResponse
+// @Failure      404      {object}  ErrorResponse
+// @Failure      409      {object}  ErrorResponse
+// @Failure      422      {object}  ErrorResponse
+// @Failure      500      {object}  ErrorResponse
+// @Router       /{{.Route}}/{ {{- .IDParam -}} } [put]
+{{- end}}
+func (h *{{.Entity}}Handler) Update{{.Entity}}(w http.ResponseWriter, r *http.Request) {
+	id, ok := h.parseID(w, r)
+	if !ok {
+		return
+	}
+
+	var req domain.Update{{.Entity}}Request
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		RespondError(w, http.StatusBadRequest, "INVALID_JSON", "malformed request payload")
+		return
+	}
+
+	if err := h.validate.Struct(req); err != nil {
+		RespondValidationError(w, "request payload validation failed", validationDetails(err))
+		return
+	}
+
+	item, err := h.service.Update{{.Entity}}(r.Context(), id, req)
+	if err != nil {
+		respondDomainError(w, r, h.logger, err, "{{.HumanName}}")
+		return
+	}
+
+	RespondSuccess(w, http.StatusOK, item)
+}
+{{end}}
+{{- if .HasDelete}}
+// Delete{{.Entity}} handles DELETE /api/v1/{{.Route}}/{ {{- .IDParam -}} }.
+{{- if .Swagger}}
+//
+// @Summary      Delete a {{.HumanName}}
+// @Tags         {{.Tag}}
+// @Produce      json
+// @Param        {{.IDParam}}  path      {{.ID.SwaggerType}}  true  "{{.Entity}} ID"
+// @Success      200  {object}  SuccessResponse
+// @Failure      404  {object}  ErrorResponse
+// @Failure      500  {object}  ErrorResponse
+// @Router       /{{.Route}}/{ {{- .IDParam -}} } [delete]
+{{- end}}
+func (h *{{.Entity}}Handler) Delete{{.Entity}}(w http.ResponseWriter, r *http.Request) {
+	id, ok := h.parseID(w, r)
+	if !ok {
+		return
+	}
+
+	if err := h.service.Delete{{.Entity}}(r.Context(), id); err != nil {
+		respondDomainError(w, r, h.logger, err, "{{.HumanName}}")
+		return
+	}
+
+	RespondMessage(w, http.StatusOK, "{{.HumanName}} deleted successfully")
+}
+{{end}}
+{{- range .Custom}}
+// {{.GoMethod}} handles {{.HTTPMethod}} /api/v1/{{$.Route}}{{.Path}}.
+{{- if $.Swagger}}
+//
+// @Summary      {{.Summary}}
+// @Tags         {{$.Tag}}
+// @Produce      json
+{{- if .HasID}}
+// @Param        {{$.IDParam}}  path      {{$.ID.SwaggerType}}  true  "{{$.Entity}} ID"
+{{- end}}
+// @Success      200  {object}  SuccessResponse
+// @Failure      500  {object}  ErrorResponse
+// @Router       /{{$.Route}}{{.Path}} [{{.MethodLower}}]
+{{- end}}
+func (h *{{$.Entity}}Handler) {{.GoMethod}}(w http.ResponseWriter, r *http.Request) {
+{{- if .HasID}}
+	id, ok := h.parseID(w, r)
+	if !ok {
+		return
+	}
+
+	if err := h.service.{{.GoMethod}}(r.Context(), id); err != nil {
+{{- else}}
+	if err := h.service.{{.GoMethod}}(r.Context()); err != nil {
+{{- end}}
+		respondDomainError(w, r, h.logger, err, "{{$.HumanName}}")
+		return
+	}
+
+	RespondMessage(w, http.StatusOK, "{{.Name}} completed successfully")
+}
+{{end}}
