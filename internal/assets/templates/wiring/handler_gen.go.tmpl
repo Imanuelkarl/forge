@@ -15,6 +15,10 @@ type Handler struct {
 {{- end}}
 }
 
+// Routes mounts the routes of every module handler on r. Use it to plug goforge's modules
+// into a router you already have, e.g. r.Route("/api/v1", h.Routes).
+func (h *Handler) Routes(r chi.Router) { h.registerAPIRoutes(r) }
+
 // registerAPIRoutes mounts the routes of every module handler (under /api/v1).
 // Nil handlers are skipped, so tests can build a Handler with only what they need.
 func (h *Handler) registerAPIRoutes(r chi.Router) {

@@ -291,7 +291,7 @@ func FindRoot(start string) (string, error) {
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
-			return "", fmt.Errorf("%s not found: run this inside a goforge project (or `goforge new` first)", FileName)
+			return "", fmt.Errorf("%s not found: run this inside a goforge project (`goforge new <name>` for a new one, `goforge init` inside an existing one)", FileName)
 		}
 		dir = parent
 	}

@@ -45,7 +45,7 @@ func newRoot() *cobra.Command {
 	root.PersistentFlags().BoolVar(&flagDryRun, "dry-run", false, "print what would be written without touching any file")
 	root.PersistentFlags().BoolVar(&flagForce, "force", false, "overwrite scaffold files even if you edited them")
 
-	root.AddCommand(newNewCmd(), newGenerateCmd(), newSyncCmd(), newMigrateCmd(), newDoctorCmd())
+	root.AddCommand(newNewCmd(), newInitCmd(), newGenerateCmd(), newSyncCmd(), newMigrateCmd(), newDoctorCmd())
 	return root
 }
 

@@ -3,6 +3,8 @@ package gen
 import (
 	"errors"
 	"fmt"
+	"go/parser"
+	"go/token"
 	"io"
 	"io/fs"
 	"os"
@@ -290,8 +292,10 @@ func (g *Generator) projectData() *ProjectData {
 // Project writes the full project skeleton, forge.yaml and .env.
 func (g *Generator) Project() error {
 	p := g.Schema.Project
+	// Uses the go directive of an existing go.mod (goforge init), DefaultGoVersion otherwise.
 	g.project = g.projectData()
-	g.project.GoVersion = DefaultGoVersion
+
+	var files []skelFile
 
 	const prefix = "templates/project/"
 	err := fs.WalkDir(assets.FS, "templates/project", func(p string, d fs.DirEntry, err error) error {
@@ -310,11 +314,9 @@ func (g *Generator) Project() error {
 		if err != nil {
 			return err
 		}
-		if err := g.W.Write(rel, content, Scaffold); err != nil {
-			return err
-		}
+		files = append(files, skelFile{rel, content})
 		if rel == ".env.example" {
-			return g.W.Write(".env", content, Scaffold)
+			files = append(files, skelFile{".env", content})
 		}
 		return nil
 	})
@@ -322,10 +324,86 @@ func (g *Generator) Project() error {
 		return err
 	}
 
+	held, err := g.heldPackages(files)
+	if err != nil {
+		return err
+	}
+	for _, f := range files {
+		if reason, ok := held[path.Dir(f.rel)]; ok && strings.HasSuffix(f.rel, ".go") {
+			if blocked, err := g.W.Blocked(f.rel, f.content, Scaffold); err != nil {
+				return err
+			} else if !blocked {
+				g.W.Hold(f.rel, reason)
+				continue
+			}
+		}
+		if err := g.W.Write(f.rel, f.content, Scaffold); err != nil {
+			return err
+		}
+	}
+
 	if err := g.W.Write(schema.FileName, []byte(schema.RenderInitial(p)), Scaffold); err != nil {
 		return err
 	}
 	return g.Wiring()
+}
+
+// heldPackages finds the skeleton packages goforge must not add files to, mapped to the
+// reason. A package is held when one of its skeleton files is already your own file (or
+// would clash with your code): the package is then yours, so adding goforge's other files
+// to it would mix two designs. Every skeleton package that imports a held package is held
+// too, because it was written against goforge's version and would not compile.
+// In a fresh project nothing is held.
+func (g *Generator) heldPackages(files []skelFile) (map[string]string, error) {
+	held := map[string]string{}
+	imports := map[string][]string{} // package dir -> project-local package dirs it imports
+	modPrefix := g.Schema.Project.Module + "/"
+
+	for _, f := range files {
+		if !strings.HasSuffix(f.rel, ".go") {
+			continue
+		}
+		dir := path.Dir(f.rel)
+		if !strings.HasSuffix(f.rel, "_test.go") {
+			blocked, err := g.W.Blocked(f.rel, f.content, Scaffold)
+			if err != nil {
+				return nil, err
+			}
+			if _, ok := held[dir]; blocked && !ok {
+				held[dir] = dir + " is your own package"
+			}
+		}
+		if pf, err := parser.ParseFile(token.NewFileSet(), f.rel, f.content, parser.ImportsOnly); err == nil {
+			for _, imp := range pf.Imports {
+				if p, err := strconv.Unquote(imp.Path.Value); err == nil && strings.HasPrefix(p, modPrefix) {
+					imports[dir] = append(imports[dir], strings.TrimPrefix(p, modPrefix))
+				}
+			}
+		}
+	}
+
+	for changed := true; changed; {
+		changed = false
+		for dir, deps := range imports {
+			if _, ok := held[dir]; ok {
+				continue
+			}
+			for _, dep := range deps {
+				if _, ok := held[dep]; ok {
+					held[dir] = "needs goforge's " + dep + ", but " + dep + " is your own package"
+					changed = true
+					break
+				}
+			}
+		}
+	}
+	return held, nil
+}
+
+// skelFile is one rendered project skeleton file.
+type skelFile struct {
+	rel     string
+	content []byte
 }
 
 // UpdateGoVersion re-renders go.mod-dependent files (the Dockerfile) after `go mod tidy`
@@ -452,6 +530,40 @@ func swagVersion() string {
 		return ""
 	}
 	return semverRe.FindString(string(out))
+}
+
+// ModulePath reads the module path from the project's go.mod ("" when there is none).
+func ModulePath(root string) string {
+	b, err := os.ReadFile(filepath.Join(root, "go.mod"))
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 2 && fields[0] == "module" {
+			return strings.Trim(fields[1], `"`)
+		}
+	}
+	return ""
+}
+
+// DetectDatabase guesses the database of an existing project from the SQL drivers its
+// go.mod requires. It returns "" when it cannot tell.
+func DetectDatabase(root string) string {
+	b, err := os.ReadFile(filepath.Join(root, "go.mod"))
+	if err != nil {
+		return ""
+	}
+	mod := string(b)
+	postgres := strings.Contains(mod, "github.com/jackc/pgx") || strings.Contains(mod, "github.com/lib/pq")
+	mysql := strings.Contains(mod, "github.com/go-sql-driver/mysql")
+	switch {
+	case postgres && !mysql:
+		return "postgres"
+	case mysql && !postgres:
+		return "mysql"
+	}
+	return ""
 }
 
 // GoVersion reads the go directive (major.minor) from the project's go.mod.

@@ -26,6 +26,7 @@ make sure that directory is on your `PATH`.
 | Command                                                 | What it does                                                                                                                                                                                                                                                  |
 | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `goforge new <name>`                                    | Prompts for module path, database (postgres/mysql), swagger. Writes the project skeleton, `forge.yaml`, `.env`, Makefile, Dockerfile, migration runner; runs `go mod tidy`.                                                                                   |
+| `goforge init`                                          | Run inside an existing project. Reads the module from `go.mod`, detects the database, writes `forge.yaml` and only the missing skeleton files: never overwrites or edits your files. See below.                                                               |
 | `goforge generate module <name>` (`g m`)                | Reads the module from `forge.yaml`, or prompts for fields (or `--field`), appends it to `forge.yaml`, and generates domain + DTOs, handler (CRUD + custom endpoints, swagger), service, SQL repository, in-memory repository, tests, and the table migration. |
 | `goforge generate middleware <name>` (`g mw`)           | Scaffolds a middleware (`blank`, `security-headers`, `rate-limit`) and registers it globally.                                                                                                                                                                 |
 | `goforge sync`                                          | Re-reads `forge.yaml`, regenerates every module and the wiring.                                                                                                                                                                                               |
@@ -34,6 +35,39 @@ make sure that directory is on your `PATH`.
 
 Global flags: `--dry-run`, `--force`. Per-command: `--no-swagger`, `-y/--yes`; `new` also takes
 `--db postgres|mysql` and `--id-type int|bigint|uuid`.
+
+## Adding goforge to an existing project
+
+```bash
+cd my-existing-api
+git status            # start clean, so you can review what goforge adds
+goforge init          # or: goforge init -y --db postgres
+```
+
+`init` works in the current directory and never touches what is already there:
+
+- **Existing files are kept.** A skeleton file that already exists (`README.md`, `cmd/server/main.go`,
+  `internal/config/config.go`, ...) is left as it is, and goforge keeps leaving it alone on every later `sync`.
+- **Your packages stay yours.** If a skeleton package such as `internal/config` already holds your own code,
+  goforge adds nothing to it. It also holds back any skeleton file that would need goforge's version of that
+  package (e.g. `internal/database`).
+- **No clashes.** A new Go file is not written when its package name differs from the directory's, or when it
+  declares a name your package already declares.
+- **`go.mod`** is only changed by `go mod tidy`, which adds goforge's dependencies (you are asked first;
+  `--skip-tidy` skips it). Existing migrations stay; new ones get later timestamps.
+
+Everything that was kept or held back is listed at the end. Re-running `goforge init` adds whatever is still
+missing (e.g. after you rename a clashing function).
+
+If you keep your own server and router, mount the generated modules once:
+
+```go
+h := app.NewHandler(app.Deps{DB: db, Logger: logger, Validate: validator.New()})
+r.Route("/api/v1", h.Routes) // every module goforge generates
+app.RegisterGlobalMiddleware(r) // optional: middleware listed in forge.yaml
+```
+
+From then on use goforge as usual: `goforge g m <name>`, `goforge sync`, `goforge migrate up`.
 
 Not built yet: auth, rbac, notifications, monitoring/audit packs; `migrate diff`; `layout: feature`;
 soft delete; enforcing `security:` rules (they are parsed and recorded).

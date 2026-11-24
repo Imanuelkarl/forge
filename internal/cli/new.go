@@ -24,10 +24,9 @@ func newNewCmd() *cobra.Command {
 	)
 
 	cmd := &cobra.Command{
-		Use:     "new [name]",
-		Aliases: []string{"init"},
-		Short:   "Create a new project (skeleton, forge.yaml, .env, migrations runner)",
-		Args:    cobra.MaximumNArgs(1),
+		Use:   "new [name]",
+		Short: "Create a new project in a new directory (use `goforge init` for an existing project)",
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			p := prompt.New(yes)
 
